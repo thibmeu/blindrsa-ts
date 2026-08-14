@@ -32,14 +32,19 @@ export type PartiallyBlindRSAParams = BlindRSAParams;
 export interface PartiallyBlindRSAPlatformParams extends BlindRSAPlatformParams {
     // Runs the client operations somewhere other than WebCrypto and SJCL.
     //
-    // Needed in browsers: the metadata-derived public exponent is about half
-    // the size of the modulus, and WebCrypto rejects exponents that large, so
-    // `finalize` and `verify` cannot use it. See @cloudflare/blindrsa-ts/wasm.
+    // The metadata-derived public exponent is about half the size of the
+    // modulus, and WebCrypto rejects exponents that large, so `finalize` and
+    // `verify` need this in browsers, on Cloudflare Workers, and in Node.js
+    // above 3072 bits. See @cloudflare/blindrsa-ts/wasm.
     backend?: PartiallyBlindRSABackend;
 }
 
 export class PartiallyBlindRSA {
     private static readonly NAME = 'RSA-PSS';
+
+    // Above this no WebCrypto implementation verifies the derived key; see
+    // verifyDerived.
+    private static readonly MAX_WEBCRYPTO_MODULUS_BITS = 3072;
 
     constructor(public readonly params: PartiallyBlindRSAParams & PartiallyBlindRSAPlatformParams) {
         switch (params.prepareType) {
@@ -414,15 +419,24 @@ export class PartiallyBlindRSA {
 
     // Verifies an RSASSA-PSS signature under the metadata-derived public key.
     //
-    // This is the step browsers refuse: importKey rejects the derived
-    // exponent in Chromium, and verify returns false in Firefox. Configure a
-    // backend to run the client elsewhere.
+    // This is the step platforms refuse: Chromium and Cloudflare Workers reject
+    // the derived exponent at importKey, Firefox returns false, and Node.js
+    // returns false above MAX_WEBCRYPTO_MODULUS_BITS for a signature it just
+    // produced itself. That last case cannot be told from a bad signature, so
+    // refuse rather than answer. Configure a backend to run the client there.
     private async verifyDerived(
         pk_derived: BigPublicKey,
         jwkKey: JsonWebKey,
         msg_prime: Uint8Array,
         signature: Uint8Array,
     ): Promise<boolean> {
+        const modulusLength = pk_derived.n.bitLength();
+        if (modulusLength > PartiallyBlindRSA.MAX_WEBCRYPTO_MODULUS_BITS) {
+            throw new Error(
+                `cannot verify a ${modulusLength}-bit modulus with WebCrypto: ` +
+                    `pass the backend from @cloudflare/blindrsa-ts/wasm`,
+            );
+        }
         const pk_derived_key = await crypto.subtle.importKey(
             'jwk',
             {

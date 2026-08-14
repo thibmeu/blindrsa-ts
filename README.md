@@ -81,7 +81,7 @@ At the time of writing, this dedicated optimization is done only for the `BlindS
 
 **Partially Blind RSA verification**
 
-Partially Blind RSA derives a per-metadata public key whose exponent is about half the size of the modulus. [`crypto.subtle`](https://developer.mozilla.org/en-US/docs/Web/API/Crypto/subtle) implementations limit how large a public exponent may be, so the derived key cannot be used with the WebCrypto RSA operations in browsers: Chromium rejects the key at `importKey`, and Firefox imports it but returns `false` from `verify`. This is independent of the modulus size, because a larger modulus yields a proportionally larger derived exponent. You can follow bugs for [Chromium](https://issues.chromium.org/issues/340178598) and [Firefox](https://bugzilla.mozilla.org/show_bug.cgi?id=1896444).
+Partially Blind RSA derives a per-metadata public key whose exponent is about half the size of the modulus. [`crypto.subtle`](https://developer.mozilla.org/en-US/docs/Web/API/Crypto/subtle) implementations limit how large a public exponent may be, so the derived key cannot be used with the WebCrypto RSA operations in browsers or on Cloudflare Workers: Chromium and Workers reject the key at `importKey`, and Firefox imports it but returns `false` from `verify`. Node.js accepts it up to a 3072-bit modulus, and above that returns `false` for a signature it has just produced itself. You can follow bugs for [Chromium](https://issues.chromium.org/issues/340178598) and [Firefox](https://bugzilla.mozilla.org/show_bug.cgi?id=1896444).
 
 Both `finalize` and `verify` are affected, since finalization verifies the signature it returns.
 
@@ -95,7 +95,7 @@ const backend = await wasmBackend();
 const suite = RSAPBSSA.SHA384.PSS.Randomized({ supportsRSARAW: false, backend });
 ```
 
-Without a backend the library uses WebCrypto and SJCL, which stays the default and is the faster path where it works, such as Node.js and Cloudflare Workers.
+Without a backend the library uses WebCrypto and SJCL. That stays the default and is the faster path where it works, which for RSAPBSSA means Node.js up to 3072 bits; RSABSSA derives no exponent and needs no backend anywhere.
 
 The backend also matters for speed, not only for browser support: `blind` cannot use WebCrypto on any platform, and the derived exponent makes it far more expensive than an ordinary `65537` operation. Measured on RSA-2048 in Node.js, `blind` takes about 694 ms with SJCL against 44 ms in WebAssembly, and `verify` about 575 ms against 39 ms.
 
@@ -103,12 +103,12 @@ The module is located relative to the loader, which covers Node.js and browsers.
 
 ```ts
 import { wasmBackend } from '@cloudflare/blindrsa-ts/wasm';
-import wasmModule from '@cloudflare/blindrsa-ts/wasm/module';
+import wasmModule from '@cloudflare/blindrsa-ts/wasm/module.wasm';
 
 const backend = await wasmBackend(wasmModule);
 ```
 
-The backend accepts modulus sizes from 1024 to 4096 bits, in multiples of 64 bits, which covers the sizes RSA keys are generated at in practice. Other sizes are rejected rather than answered wrongly: the exponent derivation of the underlying crate diverges from the draft for them.
+The backend accepts modulus sizes from 1024 to 4096 bits, in multiples of 64 bits, which covers the sizes RSA keys are generated at in practice. Other sizes are rejected rather than answered wrongly: the exponent derivation of the underlying crate diverges from the draft for them. The draft is stricter still, [Section 4.6](https://datatracker.ietf.org/doc/html/draft-amjad-cfrg-partially-blind-rsa-02#name-public-key-derivation) requiring `modulus_len` to be a power of two, so only 1024, 2048 and 4096 are defined suites. Neither path enforces that.
 
 Key generation and blind signing are not part of the backend; the issuer keeps using WebCrypto and SJCL.
 

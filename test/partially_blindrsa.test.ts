@@ -113,6 +113,30 @@ test.each([
     expect(primeCount).toBe(512);
 });
 
+// Node.js returns false here rather than failing, so a valid signature would
+// look invalid. Refusing keeps an unusable environment distinct from a bad
+// signature.
+test('verify/refuses a modulus WebCrypto cannot verify', async () => {
+    const { publicKey } = await crypto.subtle.generateKey(
+        {
+            name: 'RSA-PSS',
+            modulusLength: 4096,
+            publicExponent: Uint8Array.of(0x01, 0x00, 0x01),
+            hash: 'SHA-384',
+        },
+        true,
+        ['sign', 'verify'],
+    );
+    const suite = RSAPBSSA.SHA384.PSS.Randomized();
+    const msg = suite.prepare(crypto.getRandomValues(new Uint8Array(10)));
+    const info = crypto.getRandomValues(new Uint8Array(10));
+    const signature = crypto.getRandomValues(new Uint8Array(512));
+
+    await expect(suite.verify(publicKey, signature, msg, info)).rejects.toThrow(
+        'cannot verify a 4096-bit modulus with WebCrypto',
+    );
+}, 60_000);
+
 describe.each(vectors)('Errors-vec%#', (v: Vector) => {
     test('non-extractable-keys', async () => {
         const { privateKey, publicKey } = await keysFromVector(v, false);

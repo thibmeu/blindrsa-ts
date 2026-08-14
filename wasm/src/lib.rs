@@ -69,9 +69,12 @@ fn derive<S: SaltMode>(n: &[u8], e: &[u8], info: &[u8]) -> Result<PbPublicKey<S>
     // derived from it, part company with the draft: signatures no other
     // implementation accepts, and valid ones rejected. Refuse the key rather
     // than answer wrongly, which for verification means quietly returning
-    // false. In practice this excludes modulus sizes that are not a multiple
-    // of 64 bits.
-    if n.bits_precision() as usize != n_len * 8 {
+    // false. In practice this excludes modulus sizes that are not a multiple of
+    // 64 bits, and encodings padded with leading zero bytes: there `lambda_len`
+    // follows the integer, by way of RsaPublicKey::size, while the salt follows
+    // the encoding. Whole bytes, since a top byte with its high bit clear still
+    // leaves the two lengths equal.
+    if n.bits().div_ceil(8) as usize != n_len || n.bits_precision() as usize != n_len * 8 {
         return Err(Error::UnsupportedParameters);
     }
     let pk = RsaPublicKey::new(n, e).map_err(|_| Error::UnsupportedParameters)?;

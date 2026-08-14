@@ -216,6 +216,9 @@ describe.each(vectors)('Wasm_%#', (v: Vector) => {
     test.each([
         ['a zero modulus', () => Uint8Array.of(0)],
         ['a modulus below 1024 bits', () => hexToUint8(v.n).subarray(0, 64)],
+        // Limb-aligned, but longer than the modulus needs, so the salt and
+        // lambda_len disagree and the derived exponent is not the draft's.
+        ['a zero-padded modulus', () => joinAll([new Uint8Array(8), hexToUint8(v.n)])],
     ])('verify/reports %s as an error, not a bad signature', async (_, makeModulus) => {
         // Straight to the backend: PartiallyBlindRSA only accepts a CryptoKey,
         // which cannot carry a modulus this malformed.
@@ -227,6 +230,21 @@ describe.each(vectors)('Wasm_%#', (v: Vector) => {
             saltLength: 48,
         };
         await expect(backend.verify(ctx, inputMsg, sig)).rejects.toThrow();
+    });
+
+    // The counterpart: here the two lengths still agree, so the key is
+    // legitimate and a bit-for-bit guard would wrongly refuse it.
+    test('verify/accepts a modulus whose top bit is clear', async () => {
+        const n = hexToUint8(v.n);
+        n[0] &= 0x7f;
+        const ctx = {
+            n,
+            e: hexToUint8(v.e),
+            info,
+            hash: 'SHA-384',
+            saltLength: 48,
+        };
+        await expect(backend.verify(ctx, inputMsg, sig)).resolves.toBe(false);
     });
 
     // The crate derives the per-metadata exponent with the modulus encoded to
